@@ -1,8 +1,10 @@
+![Super 606](Images/ipad2wcase.png)
+
 # 606 Inspired Synth Drums
 
-See demos of the [SUPER 606 app here](https://audiokitpro.com/super606). 
+See demos of the [SUPER 606 app](https://audiokitpro.com/super606). 
 
-Here's the secret sauce behind the Super 606 XL "608"  Kick Drum, Analog Toms, and its melodic metallic Hi-Hats. 
+Here's the DSP code behind the Super 606 XL "608"  Kick Drum, Analog Toms, and its melodic metallic Hi-Hats. 
 
 
 It's original modular C++ with no plugin  wrapper (no JUCE, etc), sample player, or mixer attached. Drop the headers into your audio project and connect them to whatever engine you already use.
@@ -15,8 +17,8 @@ The toms use a few quieter resonances around the main note instead of a single c
 
 
 
-- 🔊 [OG 1983 Analog 606 Lo Tom](Audio/606_LT_Hardware_48k.wav)
-- 🔊 [NEW Open-Source  606 Lo Tom](Audio/606_LT_NEW_OpenSource.wav)
+- 🔊 [OG 1983 Analog 606 Lo Tom](https://audiokitpro.com/mp3/606_LT_Hardware_48k.wav)
+- 🔊 [NEW Open-Source  606 Lo Tom](https://audiokitpro.com/mp3/606_LT_NEW_OpenSource.wav)
 
 
 ## Get Creative
