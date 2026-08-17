@@ -143,11 +143,6 @@ static constexpr HiHatSpec kOpenHatSpec = {
 
 static constexpr float kFullLevelSampleRateRatio = 0.40f;
 static constexpr float kMutedSampleRateRatio = 0.48f;
-static constexpr float kMinimumStateMagnitude = 1.0e-20f;
-
-inline float flushDenormal(float value) {
-    return std::fabs(value) < kMinimumStateMagnitude ? 0.0f : value;
-}
 
 class LowPassBiquad {
 public:

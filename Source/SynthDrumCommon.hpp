@@ -1,6 +1,6 @@
 #pragma once
 
-// Little bits shared by both drums
+// Little bits shared by the drum voices
 
 #include <algorithm>
 #include <cmath>
@@ -10,6 +10,11 @@ namespace SynthDrums606 {
 
 static constexpr float kPi = 3.14159265358979323846f;
 static constexpr float kTwoPi = 6.28318530717958647692f;
+static constexpr float kMinimumStateMagnitude = 1.0e-20f;
+
+inline float flushDenormal(float value) {
+    return std::fabs(value) < kMinimumStateMagnitude ? 0.0f : value;
+}
 
 inline float clampf(float x, float lo, float hi) {
     return std::max(lo, std::min(x, hi));
@@ -31,15 +36,27 @@ public:
     }
 
     float bipolar() {
+        const uint32_t x = next();
+        return static_cast<float>(x) * (2.0f / 4294967295.0f) - 1.0f;
+    }
+
+    // The tom noise was tuned with the top 24 bits of the generator
+    // Keep that mapping here so the other drum voices do not change
+    float bipolar24() {
+        const uint32_t x = next();
+        return static_cast<float>(x >> 8) * (2.0f / 16777215.0f) - 1.0f;
+    }
+
+private:
+    uint32_t next() {
         uint32_t x = state_;
         x ^= x << 13;
         x ^= x >> 17;
         x ^= x << 5;
         state_ = x;
-        return static_cast<float>(x) * (2.0f / 4294967295.0f) - 1.0f;
+        return x;
     }
 
-private:
     uint32_t state_ = 0x12345678u;
 };
 
@@ -116,6 +133,20 @@ public:
                         1.0f - alpha);
     }
 
+    void setLowPass(float cutoffHz, float q) {
+        const float c = clampf(cutoffHz, 10.0f, static_cast<float>(sampleRate_ * 0.45));
+        const float safeQ = std::max(0.05f, q);
+        const float w0 = kTwoPi * c / static_cast<float>(sampleRate_);
+        const float cosW0 = std::cos(w0);
+        const float alpha = std::sin(w0) / (2.0f * safeQ);
+        setCoefficients((1.0f - cosW0) * 0.5f,
+                        1.0f - cosW0,
+                        (1.0f - cosW0) * 0.5f,
+                        1.0f + alpha,
+                        -2.0f * cosW0,
+                        1.0f - alpha);
+    }
+
     float process(float x) {
         const float y = b0_ * x + z1_;
         z1_ = b1_ * x - a1_ * y + z2_;
@@ -146,6 +177,16 @@ private:
 static inline float decayCoef(double sampleRate, float seconds) {
     const float safeSeconds = std::max(0.0005f, seconds);
     return std::exp(-1.0f / static_cast<float>(sampleRate * safeSeconds));
+}
+
+static inline float onePoleCoef(double sampleRate, float seconds) {
+    const float safeSeconds = std::max(0.00001f, seconds);
+    return std::exp(-1.0f / static_cast<float>(sampleRate * safeSeconds));
+}
+
+static inline float decayCoefT60(double sampleRate, float seconds) {
+    const float safeSeconds = std::max(0.0001f, seconds);
+    return std::exp(-6.9077553f / static_cast<float>(sampleRate * safeSeconds));
 }
 
 class DecayEnvelope {
