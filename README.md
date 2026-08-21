@@ -28,8 +28,8 @@ For another take on synth snare code, check out the excellent [Mutable Instrumen
 
 Clap is now a 99.9% match for the Analog RD-6. Since the original 606 never had a clap, the analog re-issue graciously lent its hand (claps) 👏. Yes, a synth clone from a synth clone. Clone Inception unlocked. Cloneception?
 
-- 🔊 [OG 1981 Analog 606 Lo Tom](https://audiokitpro.com/mp3/606_LT_Hardware_48k.wav)
-- 🔊 [NEW SUPER 606 Lo Tom](https://audiokitpro.com/mp3/606_LT_NEW_OpenSource.wav)
+- 🔊 [Analog Hardware Clap](https://audiokitpro.com/mp3/606_SampleClap.wav)
+- 🔊 [NEW SUPER 606 Clap](https://audiokitpro.com/mp3/606_SynthClap.wav)
 
 
 ## Analog Toms
