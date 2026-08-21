@@ -10,6 +10,7 @@ namespace SynthDrums606 {
 
 static constexpr float kPi = 3.14159265358979323846f;
 static constexpr float kTwoPi = 6.28318530717958647692f;
+static constexpr float kT60ToTau = 6.9077553f;
 static constexpr float kMinimumStateMagnitude = 1.0e-20f;
 
 inline float flushDenormal(float value) {
@@ -45,6 +46,13 @@ public:
     float bipolar24() {
         const uint32_t x = next();
         return static_cast<float>(x >> 8) * (2.0f / 16777215.0f) - 1.0f;
+    }
+
+    // The snare noise was tuned with the bottom 24 bits
+    // Keep this separate so the tom stream stays exactly the same
+    float bipolarLow24() {
+        const uint32_t x = next();
+        return static_cast<float>(x & 0x00FFFFFFu) / 8388608.0f - 1.0f;
     }
 
 private:
@@ -133,6 +141,20 @@ public:
                         1.0f - alpha);
     }
 
+    void setBandPass(float centerHz, float q) {
+        const float c = clampf(centerHz, 10.0f, static_cast<float>(sampleRate_ * 0.45));
+        const float safeQ = std::max(0.05f, q);
+        const float w0 = kTwoPi * c / static_cast<float>(sampleRate_);
+        const float sinW0 = std::sin(w0);
+        const float alpha = sinW0 / (2.0f * safeQ);
+        setCoefficients(0.5f * sinW0,
+                        0.0f,
+                        -0.5f * sinW0,
+                        1.0f + alpha,
+                        -2.0f * std::cos(w0),
+                        1.0f - alpha);
+    }
+
     void setLowPass(float cutoffHz, float q) {
         const float c = clampf(cutoffHz, 10.0f, static_cast<float>(sampleRate_ * 0.45));
         const float safeQ = std::max(0.05f, q);
@@ -186,7 +208,7 @@ static inline float onePoleCoef(double sampleRate, float seconds) {
 
 static inline float decayCoefT60(double sampleRate, float seconds) {
     const float safeSeconds = std::max(0.0001f, seconds);
-    return std::exp(-6.9077553f / static_cast<float>(sampleRate * safeSeconds));
+    return std::exp(-kT60ToTau / static_cast<float>(sampleRate * safeSeconds));
 }
 
 class DecayEnvelope {
