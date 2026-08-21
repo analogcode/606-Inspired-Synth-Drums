@@ -13,7 +13,7 @@ The hi-hats are the clever part. Most drum synths start with a handful of square
 
 ## 606 Synth Snare
 
-The snare is a 99% match for a hardware sample. Every drum hit is unique and different, like real analog hardware. 
+The snare is an audible match for a hardware sample. Every drum hit is unique and different, like real analog hardware. 
 
 The snare keeps the two useful parts separate. A short high-pitched shell gives it the note, then two bandpass filters shape the noise into the wire sound. I left a very quiet low ring under the noise so the two halves land as one drum.
 
@@ -26,7 +26,7 @@ For another take on synth snare code, check out the excellent [Mutable Instrumen
 
 ## Analog Clap
 
-Clap is now a 99.9% match for the Analog RD-6. Since the original 606 never had a clap, the analog re-issue graciously lent its hand (claps) 👏. Yes, a synth clone from a synth clone. Clone Inception unlocked. Cloneception?
+Clap is an audible match for the Analog RD-6. Since the original 606 never had a clap, the analog re-issue graciously lent its hand (claps) 👏. Yes, a synth clone from a synth clone. Clone Inception unlocked. Cloneception?
 
 - 🔊 [Analog Hardware Clap](https://audiokitpro.com/mp3/606_SampleClap.wav)
 - 🔊 [NEW SUPER 606 Clap](https://audiokitpro.com/mp3/606_SynthClap.wav)
