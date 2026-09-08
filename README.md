@@ -42,7 +42,9 @@ The toms use a few quieter resonances around the main note instead of a single c
 
 ## T-06 Style Hats
 
-These are a second take on the hats, based on a 1981 unit with a surprisingly dark tone. If bright hats aren’t your thing, you might like these.
+These are a second take on the hats, based on a 1981 unit with a surprisingly dark tone. If bright hats aren’t your thing, you might like these. 
+
+These are still a wip. Use at your own risk. They are currently heavy CPU. 
 
 Six sine carriers create the metallic tone, with eighteen shared oscillators modulating their amplitude and phase. The closed hat uses fewer modulation routes for its shorter strike. Each hat has its own starting phases, envelope, and filter.
 

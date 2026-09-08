@@ -1088,38 +1088,42 @@ public:
             pushSource();
         }
 
-        double source = 0.0;
-        int cursor = writeIndex_ == 0 ? tapCount_ - 1 : writeIndex_ - 1;
-        for (int tap = 0; tap < tapCount_; ++tap) {
-            source += filter_[tap] * history_[cursor];
-            if (--cursor < 0) {
-                cursor = tapCount_ - 1;
-            }
-        }
+        // Read the ring in two spans, with no wrap check inside the tap loop
+        double source = filterSpan(filter_, history_.data(), writeIndex_);
+        source += filterSpan(filter_ + writeIndex_, history_.data() + writeIndex_,
+                             tapCount_ - writeIndex_);
 
         const double time = static_cast<double>(frameIndex_) / sampleRate_;
         const double age = std::max(0.0, time - envelope_->delaySeconds);
-        const double attackPosition = std::max(
-            0.0, std::min(age / envelope_->attackSeconds, 1.0));
-        const double attack = std::pow(
-            std::sin(0.25 * kSourceTwoPi * attackPosition),
-            2.0 * envelope_->attackShape);
+        double attack = 1.0;
+        if (age < envelope_->attackSeconds) {
+            const double attackPosition = age / envelope_->attackSeconds;
+            attack = std::pow(
+                std::sin(0.25 * kSourceTwoPi * attackPosition),
+                2.0 * envelope_->attackShape);
+        }
         const double slow = std::exp(
             -age / std::max(0.004, envelope_->slowDecaySeconds * decay_));
-        const double fast = std::exp(
-            -age / std::max(0.004, envelope_->fastDecaySeconds * decay_));
-        double body = (1.0 - envelope_->fastWeight) * slow
-            + envelope_->fastWeight * fast;
-        if (open_) {
-            const double tail = std::max(0.0, age - envelope_->tailStartSeconds * decay_)
+        double body = slow;
+        if (envelope_->fastWeight > 0.0) {
+            const double fast = std::exp(
+                -age / std::max(0.004, envelope_->fastDecaySeconds * decay_));
+            body = (1.0 - envelope_->fastWeight) * slow
+                + envelope_->fastWeight * fast;
+        }
+        if (open_ && age > envelope_->tailStartSeconds * decay_) {
+            const double tail = (age - envelope_->tailStartSeconds * decay_)
                 / std::max(0.003, envelope_->tailScaleSeconds * decay_);
             body *= std::exp(-std::pow(tail, envelope_->tailShape));
         }
 
         // A short fade keeps the end of the gate from clicking
-        const double fadePosition = std::max(
-            0.0, std::min((durationSeconds_ - time) / 0.005, 1.0));
-        const double fade = std::sin(0.25 * kSourceTwoPi * fadePosition);
+        double fade = 1.0;
+        if (durationSeconds_ - time < 0.005) {
+            const double fadePosition = std::max(
+                0.0, (durationSeconds_ - time) / 0.005);
+            fade = std::sin(0.25 * kSourceTwoPi * fadePosition);
+        }
         const double output = source * envelope_->level * attack * body * fade * fade;
         if (++frameIndex_ >= frameCount_) {
             active_ = false;
@@ -1144,6 +1148,57 @@ public:
     }
 
 private:
+    // Reduce the modulated phase to [-pi/2, pi/2] using split pi
+    static double carrierSine(double phase) {
+        const double halfTurns = std::floor(phase / (0.5 * kSourceTwoPi) + 0.5);
+        const double reduced = (phase - halfTurns * 3.141592653589793)
+            - halfTurns * 1.2246467991473532e-16;
+        const double squared = reduced * reduced;
+        // Degree-19 sine series
+        const double sine = reduced * (1.0 + squared * (-1.0 / 6.0
+            + squared * (1.0 / 120.0 + squared * (-1.0 / 5040.0
+            + squared * (1.0 / 362880.0 + squared * (-1.0 / 39916800.0
+            + squared * (1.0 / 6227020800.0 + squared * (-1.0 / 1307674368000.0
+            + squared * (1.0 / 355687428096000.0
+            + squared * (-1.0 / 121645100408832000.0))))))))));
+        return static_cast<int>(halfTurns) % 2 != 0 ? -sine : sine;
+    }
+
+    static double filterSpan(const double *filter, const double *history, int count) {
+        double sums[4] = {};
+        int tap = 0;
+        for (; tap + 3 < count; tap += 4) {
+            sums[0] += filter[tap] * history[count - tap - 1];
+            sums[1] += filter[tap + 1] * history[count - tap - 2];
+            sums[2] += filter[tap + 2] * history[count - tap - 3];
+            sums[3] += filter[tap + 3] * history[count - tap - 4];
+        }
+        double sum = (sums[0] + sums[1]) + (sums[2] + sums[3]);
+        for (; tap < count; ++tap) {
+            sum += filter[tap] * history[count - tap - 1];
+        }
+        return sum;
+    }
+
+    // Routes are grouped by carrier, so keep each sum in a local value
+    template <int routeCount>
+    static void addRoutes(const ModulationRoute (&routes)[routeCount],
+                          std::array<double, kCarrierCount> &values,
+                          const double *sourceSin, const double *sourceCos) {
+        int index = 0;
+        while (index < routeCount) {
+            const int carrier = routes[index].carrier;
+            double value = values[carrier];
+            do {
+                const auto &route = routes[index];
+                value += route.sineWeight * sourceSin[route.modulator]
+                    + route.cosineWeight * sourceCos[route.modulator];
+                ++index;
+            } while (index < routeCount && routes[index].carrier == carrier);
+            values[carrier] = value;
+        }
+    }
+
     void pushSource() {
         std::array<double, kModulatorCount> attackSin;
         std::array<double, kModulatorCount> attackCos;
@@ -1182,20 +1237,14 @@ private:
                 }
             }
         } else {
-            for (const auto &route : kClosedPhaseRoutes) {
-                phases[route.carrier] += route.sineWeight * sourceSin[route.modulator]
-                    + route.cosineWeight * sourceCos[route.modulator];
-            }
-            for (const auto &route : kClosedAmplitudeRoutes) {
-                amplitudes[route.carrier] += route.sineWeight * sourceSin[route.modulator]
-                    + route.cosineWeight * sourceCos[route.modulator];
-            }
+            addRoutes(kClosedPhaseRoutes, phases, sourceSin, sourceCos);
+            addRoutes(kClosedAmplitudeRoutes, amplitudes, sourceSin, sourceCos);
         }
 
         const double *levels = open_ ? kOpenCarrierLevels : kClosedCarrierLevels;
         double sum = 0.0;
         for (int carrier = 0; carrier < kCarrierCount; ++carrier) {
-            sum += levels[carrier] * amplitudes[carrier] * std::sin(phases[carrier]);
+            sum += levels[carrier] * amplitudes[carrier] * carrierSine(phases[carrier]);
             carrierPhase_[carrier] += carrierStep_[carrier];
             if (carrierPhase_[carrier] >= kSourceTwoPi) {
                 carrierPhase_[carrier] -= kSourceTwoPi;
