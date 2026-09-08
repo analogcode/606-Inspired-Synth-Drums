@@ -40,11 +40,38 @@ The toms use a few quieter resonances around the main note instead of a single c
 - 🔊 [NEW SUPER 606 Lo Tom](https://audiokitpro.com/mp3/606_LT_NEW_OpenSource.wav)
 
 
+## T-06 Style Hats
+
+These are a second take on the hats, based on a 1981 unit with a surprisingly dark tone. If bright hats aren’t your thing, you might like these.
+
+Six sine carriers create the metallic tone, with eighteen shared oscillators modulating their amplitude and phase. The closed hat uses fewer modulation routes for its shorter strike. Each hat has its own starting phases, envelope, and filter.
+
+```cpp
+#include "T06HiHats.hpp"
+
+SynthDrums606::T06HiHatVoice closedHat;
+SynthDrums606::T06HiHatVoice openHat;
+
+closedHat.init(sampleRate);
+openHat.init(sampleRate);
+
+// closed or open, decay, pitch ratio
+closedHat.trigger(SynthDrums606::HiHatArticulation::closed, 1.0f, 1.0f);
+openHat.trigger(SynthDrums606::HiHatArticulation::open, 1.0f, 1.0f);
+
+// One mono sample per voice, just like the other drums
+float closed = closedHat.process();
+float open = openHat.process();
+```
+
+Decay runs from 0 to 1. A pitch ratio of 1 is the original tuning; changing it speeds up or slows down the whole hit, including the decay. The voice is deterministic, so it does not take a seed. Add any per-hit pitch or level variation in your host, along with velocity, pan, and choking.
+
 ## What's Inside?
 
 - `BassDrum.hpp`:  A swept-sine body with filtered noise and impulse transients.
 - `Clap.hpp`:  Four timed noise bursts and a diffuse tail shaped by short measurement-fitted FIR filters.
 - `HiHats.hpp`:  One metallic source with separate closed and open hat settings.
+- `T06HiHats.hpp`:  T-06 Style Hats, built from shared amplitude and phase modulation.
 - `Snare.hpp`:  A tom-like shell body with separate filtered-noise wires.
 - `Toms.hpp`:  Separate low and high tom settings built around the same voice.
 - `SynthDrumCommon.hpp`:  The filters, envelopes, noise, and other small pieces shared by the voices.
@@ -104,7 +131,7 @@ for (int frame = 0; frame < frameCount; ++frame) {
 
 Each call to `process()` gives you one mono sample. Your host can handle gain, velocity, panning, choke behavior, and the rest of the mixing.
 
-Use `kClosedHatSpec` or `kOpenHatSpec` when you trigger the hat. The tom voice works the same way with `kLowTomSpec` and `kHighTomSpec`. Each voice accepts a seed in `init()` if you want the little variations to repeat.
+Use `kClosedHatSpec` or `kOpenHatSpec` when you trigger the hat. The tom voice works the same way with `kLowTomSpec` and `kHighTomSpec`. The original voices accept a seed in `init()` if you want the little variations to repeat. `T06HiHatVoice` uses fixed starting phases and takes only the sample rate.
 
 ## Knobs
 
@@ -125,6 +152,12 @@ Use `kClosedHatSpec` or `kOpenHatSpec` when you trigger the hat. The tom voice w
 `MetalHiHatVoice::trigger()` wants:
 
 - a closed or open hat specification
+- decay from 0 to 1
+- a pitch ratio, where 1 is the original tuning
+
+`T06HiHatVoice::trigger()` wants:
+
+- `HiHatArticulation::closed` or `HiHatArticulation::open`
 - decay from 0 to 1
 - a pitch ratio, where 1 is the original tuning
 
