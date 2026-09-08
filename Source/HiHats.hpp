@@ -222,6 +222,7 @@ public:
             16.0f);
 
         activePartialCount_ = std::min(spec.partialCount, kMaxPartialCount);
+        useFastSine_ = true;
         for (int index = 0; index < activePartialCount_; ++index) {
             const float frequencyHz = spec.partials[index].frequencyHz * frequencyRatio;
             const float sampleRateRatio = frequencyHz / static_cast<float>(sampleRate_);
@@ -241,6 +242,9 @@ public:
             increments_[index] = level > 0.0f
                 ? kTwoPi * sampleRateRatio
                 : 0.0f;
+            if (!(increments_[index] >= 0.0f)) {
+                useFastSine_ = false;
+            }
             amplitudes_[index] = spec.partials[index].amplitude * level;
             bellFlags_[index] = spec.partials[index].bell;
         }
@@ -276,6 +280,11 @@ public:
             wobbleAlpha_ = 0.0f;
             wobbleDrive_ = 0.0f;
         }
+        // Keep the wrapped-phase shortcut for small, forward phase steps
+        // Custom negative frequencies or wide wobble still use the full sine
+        const float wobbleBound = wobbleDrive_ > 0.0f
+            ? wobbleDrive_ / wobbleAlpha_ : 0.0f;
+        useFastSine_ = useFastSine_ && wobbleBound <= 0.5f;
         for (int index = 0; index < kMaxPartialCount; ++index) {
             wobbleStates_[index] = 0.0f;
         }
@@ -329,15 +338,9 @@ public:
         const float bellGain = 1.0f + bellAccentAmount_ * bellAccentEnvelope_;
         bellAccentEnvelope_ = flushDenormal(bellAccentEnvelope_ * bellAccentCoefficient_);
 
-        float tonal = 0.0f;
-        for (int index = 0; index < activePartialCount_; ++index) {
-            const float lineGain = bellFlags_[index] ? bellGain : 1.0f;
-            tonal += std::sin(phases_[index]) * amplitudes_[index] * lineGain;
-            phases_[index] += increments_[index] * (1.0f + wobbleStates_[index]);
-            if (phases_[index] >= kTwoPi) {
-                phases_[index] -= kTwoPi;
-            }
-        }
+        const float tonal = useFastSine_
+            ? renderPartials<true>(bellGain)
+            : renderPartials<false>(bellGain);
 
         const float noise = noiseLowPass_.process(
             noiseHighPass_.process(noise_.process()));
@@ -393,6 +396,7 @@ public:
         noiseLowPass_.reset();
         dcBlocker_.reset();
         activePartialCount_ = 0;
+        useFastSine_ = false;
         wobbleAlpha_ = 0.0f;
         wobbleDrive_ = 0.0f;
         bellAccentAmount_ = 0.0f;
@@ -409,6 +413,40 @@ public:
     }
 
 private:
+    // Fold one turn into [-pi/2, pi/2] for the sine polynomial
+    static float metalSine(float phase) {
+        float x = phase > kPi ? phase - kTwoPi : phase;
+        const float halfPi = 0.5f * kPi;
+        if (x > halfPi) {
+            x = kPi - x;
+        } else if (x < -halfPi) {
+            x = -kPi - x;
+        }
+        const float x2 = x * x;
+        return x * (1.0f + x2 * (-1.0f / 6.0f
+            + x2 * (1.0f / 120.0f
+            + x2 * (-1.0f / 5040.0f
+            + x2 * (1.0f / 362880.0f
+            + x2 * (-1.0f / 39916800.0f))))));
+    }
+
+    // Separate loops let the compiler optimize the polynomial on its own
+    template <bool fastSine>
+    float renderPartials(float bellGain) {
+        float tonal = 0.0f;
+        for (int index = 0; index < activePartialCount_; ++index) {
+            const float lineGain = bellFlags_[index] ? bellGain : 1.0f;
+            const float sine = fastSine ? metalSine(phases_[index])
+                                       : std::sin(phases_[index]);
+            tonal += sine * amplitudes_[index] * lineGain;
+            phases_[index] += increments_[index] * (1.0f + wobbleStates_[index]);
+            if (phases_[index] >= kTwoPi) {
+                phases_[index] -= kTwoPi;
+            }
+        }
+        return tonal;
+    }
+
     double sampleRate_ = 44100.0;
     Random phaseRandom_;
     Random wobbleRandom_;
@@ -430,6 +468,7 @@ private:
     float clickCoefficient_ = 0.999f;
     float clickEnvelope_ = 0.0f;
     int activePartialCount_ = 0;
+    bool useFastSine_ = false;
     float tonalMix_ = 0.0f;
     float noiseMix_ = 0.0f;
     float saturationDrive_ = 0.0f;
