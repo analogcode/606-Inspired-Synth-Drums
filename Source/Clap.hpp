@@ -356,11 +356,21 @@ struct CoreFrame {
 class CorrelatedColorBank {
 public:
     void configure(float sourceStep) {
-        opening_.configure(kOpeningColor, sourceStep);
-        handoff_.configure(kHandoffColor, sourceStep);
-        fast_.configure(kFastColor, sourceStep);
-        late_.configure(kLateColor, sourceStep);
-        tapCount_ = opening_.tapCount();
+        CompressedSpectralCurve<kColorTapCount> opening;
+        CompressedSpectralCurve<kColorTapCount> handoff;
+        CompressedSpectralCurve<kColorTapCount> fast;
+        CompressedSpectralCurve<kColorTapCount> late;
+        opening.configure(kOpeningColor, sourceStep);
+        handoff.configure(kHandoffColor, sourceStep);
+        fast.configure(kFastColor, sourceStep);
+        late.configure(kLateColor, sourceStep);
+        tapCount_ = opening.tapCount();
+        for (std::size_t tap = 0; tap < tapCount_; ++tap) {
+            coefficients_[tap] = {opening.coefficient(tap),
+                                  handoff.coefficient(tap),
+                                  fast.coefficient(tap),
+                                  late.coefficient(tap)};
+        }
         history_.fill(0.0f);
         position_ = 0;
     }
@@ -375,15 +385,31 @@ public:
 
     ColorFrame process(float noise) {
         push(noise);
+        // Independent sums let the compiler overlap the filter calculations.
+        ColorFrame sums[4];
+        const float *samples = history_.data() + position_ + tapCount_ - 1;
+        std::size_t tap = 0;
+        for (; tap + 3 < tapCount_; tap += 4) {
+            accumulate(sums[0], coefficients_[tap],
+                       samples[-static_cast<int>(tap)]);
+            accumulate(sums[1], coefficients_[tap + 1],
+                       samples[-static_cast<int>(tap + 1)]);
+            accumulate(sums[2], coefficients_[tap + 2],
+                       samples[-static_cast<int>(tap + 2)]);
+            accumulate(sums[3], coefficients_[tap + 3],
+                       samples[-static_cast<int>(tap + 3)]);
+        }
         ColorFrame output;
-        for (std::size_t tap = 0; tap < tapCount_; ++tap) {
-            const std::size_t index = (position_ + tapCount_ - 1 - tap)
-                % tapCount_;
-            const float sample = history_[index];
-            output.opening += opening_.coefficient(tap) * sample;
-            output.handoff += handoff_.coefficient(tap) * sample;
-            output.fast += fast_.coefficient(tap) * sample;
-            output.late += late_.coefficient(tap) * sample;
+        output.opening = sums[0].opening + sums[1].opening
+            + sums[2].opening + sums[3].opening;
+        output.handoff = sums[0].handoff + sums[1].handoff
+            + sums[2].handoff + sums[3].handoff;
+        output.fast = sums[0].fast + sums[1].fast
+            + sums[2].fast + sums[3].fast;
+        output.late = sums[0].late + sums[1].late
+            + sums[2].late + sums[3].late;
+        for (; tap < tapCount_; ++tap) {
+            accumulate(output, coefficients_[tap], samples[-static_cast<int>(tap)]);
         }
         output.opening = flushDenormal(output.opening);
         output.handoff = flushDenormal(output.handoff);
@@ -393,16 +419,24 @@ public:
     }
 
 private:
+    static void accumulate(ColorFrame &output, const ColorFrame &coefficient,
+                           float sample) {
+        output.opening += coefficient.opening * sample;
+        output.handoff += coefficient.handoff * sample;
+        output.fast += coefficient.fast * sample;
+        output.late += coefficient.late * sample;
+    }
+
     void push(float sample) {
-        history_[position_] = flushDenormal(sample);
+        sample = flushDenormal(sample);
+        // Store both copies so each filter can read straight through the wrap.
+        history_[position_] = sample;
+        history_[position_ + tapCount_] = sample;
         position_ = position_ + 1 == tapCount_ ? 0 : position_ + 1;
     }
 
-    CompressedSpectralCurve<kColorTapCount> opening_;
-    CompressedSpectralCurve<kColorTapCount> handoff_;
-    CompressedSpectralCurve<kColorTapCount> fast_;
-    CompressedSpectralCurve<kColorTapCount> late_;
-    std::array<float, kColorTapCount> history_ = {{}};
+    std::array<ColorFrame, kColorTapCount> coefficients_ = {{}};
+    std::array<float, 2 * kColorTapCount> history_ = {{}};
     std::size_t tapCount_ = kColorTapCount;
     std::size_t position_ = 0;
 };
@@ -580,6 +614,10 @@ struct ReconstructionTable {
 static const ReconstructionTable kReconstructionTable;
 
 class CoreUpsampler {
+    static constexpr std::size_t kHistorySize = 256;
+    static_assert(kReconstructionTapCount % 4 == 0,
+                  "Reconstruction taps must be a multiple of four");
+
 public:
     void configure(float sourceStep) {
         sourceStep_ = clampf(sourceStep, 0.0f, 1.0f);
@@ -601,20 +639,26 @@ public:
             static_cast<std::size_t>(std::floor(phasePosition)),
             kReconstructionPhaseCount - 1);
         const float phaseMix = phasePosition - static_cast<float>(phase);
-        CoreFrame output;
-        for (int offset = firstOffset; offset <= lastOffset; ++offset) {
-            const std::size_t tap = static_cast<std::size_t>(
-                offset - firstOffset);
-            const float first =
-                kReconstructionTable.coefficients[phase][tap];
-            const float second =
-                kReconstructionTable.coefficients[phase + 1][tap];
-            const float coefficient = first
-                + phaseMix * (second - first);
-            const CoreFrame source = sourceAt(center + offset);
-            output.full += coefficient * source.full;
-            output.dryBody += coefficient * source.dryBody;
+        // The cleared ring also supplies zeros before the first core sample.
+        const std::size_t start = static_cast<uint64_t>(center + firstOffset)
+            % kHistorySize;
+        const CoreFrame *sources = history_.data() + start;
+        const auto &first = kReconstructionTable.coefficients[phase];
+        const auto &second = kReconstructionTable.coefficients[phase + 1];
+        CoreFrame sums[4];
+        for (std::size_t tap = 0; tap < kReconstructionTapCount; tap += 4) {
+            for (std::size_t lane = 0; lane < 4; ++lane) {
+                const float coefficient = first[tap + lane]
+                    + phaseMix * (second[tap + lane] - first[tap + lane]);
+                sums[lane].full += coefficient * sources[tap + lane].full;
+                sums[lane].dryBody += coefficient * sources[tap + lane].dryBody;
+            }
         }
+        CoreFrame output;
+        output.full = sums[0].full + sums[1].full
+            + sums[2].full + sums[3].full;
+        output.dryBody = sums[0].dryBody + sums[1].dryBody
+            + sums[2].dryBody + sums[3].dryBody;
         sourcePosition_ += sourceStep_;
         output.full = flushDenormal(output.full);
         output.dryBody = flushDenormal(output.dryBody);
@@ -626,21 +670,15 @@ private:
         const uint64_t final = finalIndex > 0
             ? static_cast<uint64_t>(finalIndex) : 0u;
         while (generatedSamples_ <= final) {
-            history_[generatedSamples_ % history_.size()] = core.process();
+            const std::size_t index = generatedSamples_ % kHistorySize;
+            const CoreFrame frame = core.process();
+            history_[index] = frame;
+            history_[index + kHistorySize] = frame;
             ++generatedSamples_;
         }
     }
 
-    CoreFrame sourceAt(int64_t index) const {
-        if (index < 0
-            || static_cast<uint64_t>(index) >= generatedSamples_) {
-            return CoreFrame();
-        }
-        return history_[
-            static_cast<uint64_t>(index) % history_.size()];
-    }
-
-    std::array<CoreFrame, 256> history_ = {{}};
+    std::array<CoreFrame, 2 * kHistorySize> history_ = {{}};
     uint64_t generatedSamples_ = 0;
     double sourcePosition_ = 0.0;
     float sourceStep_ = 1.0f;
